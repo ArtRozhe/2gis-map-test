@@ -1,15 +1,12 @@
 import './index.scss';
-import DG from '2gis-maps';
 import { loadData } from './utils';
+import Map from './Map';
 
-const map = DG.map('map', {
-    center: [55.75088330688495, 37.62062072753907],
-    zoom: 11,
-    fullscreenControl: false
-});
+const searchForm = document.querySelector('.js-search__form');
+const searchInput = searchForm.querySelector('.js-search__input');
+const searchSubmitButton = searchForm.querySelector('.js-search__submit');
 
-const searchForm = document.querySelector('.search__form');
-const searchInput = searchForm.querySelector('.search__input');
+const map = new Map('map');
 
 const onSearchSubmit = function(ev) {
     ev.preventDefault();
@@ -19,16 +16,26 @@ const onSearchSubmit = function(ev) {
         return false;
     }
 
+    // очистка всех маркеров
+    map.removeMarkers();
+
     searchForm.classList.add('loading');
+    searchSubmitButton.disabled = true;
 
     loadData(searchString)
         .then(data => {
             searchForm.classList.remove('loading');
-            console.log(data);
+            searchSubmitButton.disabled = false;
+
+            // сохранение данных и отображение маркеров
+            map.setMarkersData(data);
+            map.renderMarkers();
         })
         .catch(error => {
-            searchForm.classList.remove('loading');
+            // eslint-disable-next-line
             console.log(error);
+            searchForm.classList.remove('loading');
+            searchSubmitButton.disabled = false;
         })
 };
 

@@ -112,4 +112,11 @@ body {
     &__submit:active {
         background: linear-gradient(to bottom,#008fe1,#0da5d5);
     }
+
+    &__submit:disabled,
+    &__submit:disabled:hover {
+        background-color: #00a8d5;
+        background-image: none;
+        cursor: initial;
+    }
 }
