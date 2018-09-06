@@ -35,7 +35,11 @@ export default {
     module: {
         rules: [
             {test: /\.js$/, exclude: /node_modules/, loader: 'babel-loader'},
-            {test: /\.scss$/, use: ['style-loader', 'css-loader', 'sass-loader']}
+            {test: /\.scss$/, use: ['style-loader', 'css-loader', 'sass-loader']},
+            {
+                test: /\.jpe?g$|\.ico$|\.gif$|\.png$|\.svg$|\.woff$|\.ttf$|\.wav$|\.mp3$/,
+                loader: 'file-loader?name=[name].[ext]'
+            }
         ]
     }
 }
