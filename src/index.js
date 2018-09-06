@@ -1,14 +1,17 @@
 import './index.scss';
+import './favicon.ico';
+
 import { loadData } from './utils';
+import mapConfig from './config';
 import Map from './Map';
 
 const searchForm = document.querySelector('.js-search__form');
 const searchInput = searchForm.querySelector('.js-search__input');
 const searchSubmitButton = searchForm.querySelector('.js-search__submit');
 
-const map = new Map('map');
+const map = new Map(mapConfig);
 
-const onSearchSubmit = function(ev) {
+const onSearchSubmit = (ev) => {
     ev.preventDefault();
     const searchString = searchInput.value;
 
@@ -16,7 +19,7 @@ const onSearchSubmit = function(ev) {
         return false;
     }
 
-    // очистка всех маркеров
+    // очистка всех маркеров до начала загрузки данных
     map.removeMarkers();
 
     searchForm.classList.add('loading');
@@ -31,12 +34,10 @@ const onSearchSubmit = function(ev) {
             map.setMarkersData(data);
             map.renderMarkers();
         })
-        .catch(error => {
-            // eslint-disable-next-line
-            console.log(error);
+        .catch(() => {
             searchForm.classList.remove('loading');
             searchSubmitButton.disabled = false;
-        })
+        });
 };
 
 searchForm.addEventListener('submit', onSearchSubmit);
