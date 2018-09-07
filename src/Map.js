@@ -165,9 +165,8 @@ class Map {
             const markerPixelCoordinates = this._map.latLngToContainerPoint([markerLat, markerLng]);
             const bBox = this._getBBox(markerPixelCoordinates);
 
-            // алгоритм строится на предположении, что данные отсортированы таким образом, что каждый последующий
-            // маркер ниже предыдущего по приоритету, поэтому, если маркер пересекается с каким-либо ранее обработанным
-            // и добавленным в дерево, он отбрасывается. Другого
+            // считаем, что список маркеров отсортирован в порядке убывания приоритета, поэтому, если маркер пересекается с каким-либо ранее обработанным
+            // и добавленным в дерево, он отбрасывается.
             if (this._isMarkerInRenderZone(bBox) && !this._markerBoxTree.collides(bBox)) {
                 const marker = DG.marker([markerLat, markerLng]).addTo(this._map);
 
