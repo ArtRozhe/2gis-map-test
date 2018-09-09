@@ -1,7 +1,4 @@
 import DG from '2gis-maps';
-import rbush from 'rbush';
-import { now } from './utils';
-
 /**
  * Обёртка над картой DG.map, скрывающая обработку событий и фильтрацию маркеров.
  */
@@ -40,6 +37,9 @@ class Map {
 
         this._markers = [];
         this._markersData = [];
+
+        this._isFilterMarkersBusy = false;
+        this._needToUpdateMarkers = false;
     }
 
     /**
@@ -58,7 +58,7 @@ class Map {
      */
     _onResize() {
         this.removeMarkers();
-        this.renderMarkers();
+        this._updateMarkers();
     }
 
     /**
@@ -68,7 +68,7 @@ class Map {
      */
     _onMoveEnd() {
         this.removeMarkers();
-        this.renderMarkers();
+        this._updateMarkers();
     }
 
     /**
@@ -99,8 +99,8 @@ class Map {
      * Определяем, находится ли прямоугольник-маркер markerBBox внутри
      * переданной зоны zoneBBox с учётом запаса showOutsideZone.
      *
-     * @param {object} markerBBox маркер в виде bounding-box в формате {minX, minY, maxX, maxY}
-     * @param {object} zoneBBox зона проверки на попадание маркера в виде bounding-box в формате {minX, minY, maxX, maxY}
+     * @param {Object} markerBBox маркер в виде bounding-box в формате {minX, minY, maxX, maxY}
+     * @param {Object} zoneBBox зона проверки на попадание маркера в виде bounding-box в формате {minX, minY, maxX, maxY}
      * @param {number} offsetOutsideZone запас для границ zoneBBox
      * @returns {boolean}
      * @static
@@ -115,11 +115,25 @@ class Map {
     }
 
     /**
+     * Возвращает текущие границы карты в формате {minX, minY, maxX, maxY}
+     * @returns {Object} текущие границы карты в формате {minX, minY, maxX, maxY}
+     * @private
+     */
+    _getBoundsBBox() {
+        const mapSize = this._map.getSize();
+        return {
+            minX: 0,
+            minY: 0,
+            maxX: mapSize.x,
+            maxY: mapSize.y
+        };
+    }
+    /**
      * Генерируем объект по формату для rbush.
      *
      * @param {number} markerPositionX координата "x" относительно контейнера карты
      * @param {number} markerPositionY координата "y" относительно контейнера карты
-     * @returns {{minX: number, minY: number, maxX: number, maxY: number}} bounding-box
+     * @returns {Object} bounding-box в формате {minX, minY, maxX, maxY}
      * @private
      */
     _getMarkerBBox(markerPositionX, markerPositionY) {
@@ -133,9 +147,72 @@ class Map {
     }
 
     /**
+     * Собираем данные о маркерах и текущем состоянии карты в формате, необходимом для фильтрации
+     * @returns {Object} необходимые и достаточные данные для работы алгоритма фильтрации маркеров
+     * @private
+     */
+    _getPreparedDataForFilter() {
+        const markersData = this._markersData.map(markerData => {
+            const { lat, lon: lng } = markerData;
+            const markerPixelCoordinates = this._map.latLngToContainerPoint([lat, lng]);
+            const bBox = this._getMarkerBBox(markerPixelCoordinates.x, markerPixelCoordinates.y);
+
+            return {
+                lat,
+                lng,
+                bBox
+            };
+        });
+
+        return {
+            markersData,
+            boundsBBox: this._getBoundsBBox(),
+            showOutsideBoundsOffset: this._showOutsideVisibleZone
+        };
+    }
+
+    /**
+     * Фильтрация данных о маркерах на основе видимой области карты и положении маркеров относительно друг друга.
+     * Важно отметить, что метод не мутирует существующий объект с данными, а возвращает новый объект.
+     * @param {Array} markersData масив с данными о маркерах
+     * @param {Object} boundsBBox границы карты в формате {minX, minY, maxX, maxY}
+     * @param {number} showOutsideVisibleZone запас для видимой области карты, который влияет на попадание маркера в область
+     * @returns {Promise}
+     * @private
+     */
+    _filter(markersData, boundsBBox, showOutsideVisibleZone) {
+        return new window.Promise(resolve => {
+
+            const filteredData = markersData.filter(markerData => {
+                const markerBBox = markerData.bBox;
+
+                if (
+                    this.constructor.isMarkerInZone(markerBBox, boundsBBox, showOutsideVisibleZone) &&
+                    !this._markerBoxTree.collides(markerBBox)
+                ) {
+                    this._markerBoxTree.insert(markerBBox);
+                    return true;
+                }
+
+                return false;
+            });
+
+            this._markerBoxTree.clear();
+            resolve(filteredData);
+        });
+    }
+
+    /**
      * Запускаем процесс фильтрации и отображения маркеров.
      */
-    renderMarkers() {
+    _updateMarkers() {
+        if (this._isFilterMarkersBusy) {
+            this._needToUpdateMarkers = true;
+            return;
+        }
+
+        this._isFilterMarkersBusy = true;
+
         // TODO: нужно добавить очередь для обработки частых запросов
         // TODO: обдумать вынос алгоритма фильтрации маркеров в веб-воркер
         if (this._markersData.length === 0) {
@@ -147,38 +224,36 @@ class Map {
         }
 
         const renderStart = now();
-        const mapSize = this._map.getSize();
-        const renderZoneBBox = {
-            minX: 0,
-            minY: 0,
-            maxX: mapSize.x,
-            maxY: mapSize.y
-        };
 
-        this._markersData.forEach(markerData => {
-            const markerLat = markerData.lat;
-            const markerLng = markerData.lon;
+        const { markersData, boundsBBox, showOutsideBoundsOffset } = this._getPreparedDataForFilter();
 
-            const markerPixelCoordinates = this._map.latLngToContainerPoint([markerLat, markerLng]);
-            const markerBBox = this._getMarkerBBox(markerPixelCoordinates.x, markerPixelCoordinates.y);
+        this._filter(markersData, boundsBBox, showOutsideBoundsOffset)
+            .then(data => {
+                this._isFilterMarkersBusy = false;
 
-            // считаем, что список маркеров отсортирован в порядке убывания приоритета, поэтому, если маркер пересекается с каким-либо ранее обработанным
-            // и добавленным в дерево, он отбрасывается.
-            if (
-                this.constructor.isMarkerInZone(markerBBox, renderZoneBBox, this._showOutsideVisibleZone) &&
-                !this._markerBoxTree.collides(markerBBox)
-            ) {
-                const marker = DG.marker([markerLat, markerLng]).addTo(this._map);
+                data.forEach(markerData => {
+                    const { lat, lng } = markerData;
+                    const marker = DG.marker([lat, lng]).addTo(this._map);
+                    this._markers.push(marker);
+                });
+                
+                //eslint-disable-next-line
+                console.log('rendered', now() - renderStart);
 
-                this._markers.push(marker);
-                this._markerBoxTree.insert(markerBBox);
-            }
-        });
+                if (this._needToUpdateMarkers) {
+                    this._updateMarkers();
+                    this._needToUpdateMarkers = false;
 
-        // eslint-disable-next-line
-        console.log('rendered', now() - renderStart);
-        this._markerBoxTree.clear();
+                }
+            });
+    }
+
+    showMarkers() {
+        this._updateMarkers();
     }
 }
+import rbush from 'rbush';
+
+import { now } from './utils';
 
 export default Map;

@@ -32,7 +32,7 @@ const onSearchSubmit = (ev) => {
 
             // сохранение данных и отображение маркеров
             map.setMarkersData(data);
-            map.renderMarkers();
+            map.showMarkers();
         })
         .catch(() => {
             searchForm.classList.remove('loading');
