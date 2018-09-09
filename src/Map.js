@@ -1,4 +1,9 @@
 import DG from '2gis-maps';
+import rbush from 'rbush';
+
+import Filter from './Filter';
+import { now } from './utils';
+
 /**
  * Обёртка над картой DG.map, скрывающая обработку событий и фильтрацию маркеров.
  */
@@ -26,73 +31,17 @@ class Map {
         this._markerBoxTree = rbush();
 
         this._onZoomStart = this._onZoomStart.bind(this);
-        this._onResize = this._onResize.bind(this);
         this._onMoveEnd = this._onMoveEnd.bind(this);
 
         this._map.on('zoomstart', this._onZoomStart);
-        // избегаем лишних рассчётов, реагируем на событие ресайза не более одного раза за 1000 мс
-        // TODO: придумать, как сделать лучше обработку resize, пока что это очень слабое место текущей реализации
-        this._map.on('resize', DG.Util.throttle(this._onResize, 1000));
         this._map.on('moveend', this._onMoveEnd);
 
         this._markers = [];
         this._markersData = [];
 
+        this._filterMarkers = new Filter();
         this._isFilterMarkersBusy = false;
         this._needToUpdateMarkers = false;
-    }
-
-    /**
-     * Очищаем все маркеры после старта зумирования.
-     *
-     * @private
-     */
-    _onZoomStart() {
-        this.removeMarkers();
-    }
-
-    /**
-     * После ресайза удаляем с карты предыдущие маркеры и отображаем новые.
-     *
-     * @private
-     */
-    _onResize() {
-        this.removeMarkers();
-        this._updateMarkers();
-    }
-
-    /**
-     * После окончания движения удаляем с карты предыдущие маркеры и отображаем новые.
-     *
-     * @private
-     */
-    _onMoveEnd() {
-        this.removeMarkers();
-        this._updateMarkers();
-    }
-
-    /**
-     * Очищаем с карты все созданные маркеры и очищаем массив с маркерами.
-     */
-    removeMarkers() {
-        if (this._markers.length === 0) {
-            return;
-        }
-
-        this._markers.forEach(marker => {
-            marker.remove();
-        });
-
-        this._markers = [];
-    }
-
-    /**
-     * Сохраняем массив данных для последующей генерации маркеров.
-     *
-     * @param {Array} markersData сырой массив с данными по каждому маркеру
-     */
-    setMarkersData(markersData) {
-        this._markersData = markersData;
     }
 
     /**
@@ -115,7 +64,26 @@ class Map {
     }
 
     /**
-     * Возвращает текущие границы карты в формате {minX, minY, maxX, maxY}
+     * Очищаем все маркеры после старта зумирования.
+     *
+     * @private
+     */
+    _onZoomStart() {
+        this.removeMarkers();
+    }
+
+    /**
+     * После окончания движения удаляем с карты предыдущие маркеры и отображаем новые.
+     *
+     * @private
+     */
+    _onMoveEnd() {
+        this.removeMarkers();
+        this._updateMarkers();
+    }
+
+    /**
+     * Генерируем текущие границы карты в формате {minX, minY, maxX, maxY}
      * @returns {Object} текущие границы карты в формате {minX, minY, maxX, maxY}
      * @private
      */
@@ -128,6 +96,7 @@ class Map {
             maxY: mapSize.y
         };
     }
+
     /**
      * Генерируем объект по формату для rbush.
      *
@@ -173,7 +142,7 @@ class Map {
 
     /**
      * Фильтрация данных о маркерах на основе видимой области карты и положении маркеров относительно друг друга.
-     * Важно отметить, что метод не мутирует существующий объект с данными, а возвращает новый объект.
+     * Важно отметить, что метод не мутирует существующий массив с данными, данные возвращаются в новом массиве.
      * @param {Array} markersData масив с данными о маркерах
      * @param {Object} boundsBBox границы карты в формате {minX, minY, maxX, maxY}
      * @param {number} showOutsideVisibleZone запас для видимой области карты, который влияет на попадание маркера в область
@@ -181,7 +150,11 @@ class Map {
      * @private
      */
     _filter(markersData, boundsBBox, showOutsideVisibleZone) {
-        return new window.Promise(resolve => {
+        // вариант с использованием внешнего класса, работающего с вебворкером
+        return this._filterMarkers.doFilter(markersData, boundsBBox, showOutsideVisibleZone);
+
+        // вариант с локальной фильтрацией
+        /*return new window.Promise(resolve => {
 
             const filteredData = markersData.filter(markerData => {
                 const markerBBox = markerData.bBox;
@@ -199,22 +172,13 @@ class Map {
 
             this._markerBoxTree.clear();
             resolve(filteredData);
-        });
+        });*/
     }
 
     /**
      * Запускаем процесс фильтрации и отображения маркеров.
      */
     _updateMarkers() {
-        if (this._isFilterMarkersBusy) {
-            this._needToUpdateMarkers = true;
-            return;
-        }
-
-        this._isFilterMarkersBusy = true;
-
-        // TODO: нужно добавить очередь для обработки частых запросов
-        // TODO: обдумать вынос алгоритма фильтрации маркеров в веб-воркер
         if (this._markersData.length === 0) {
             return;
         }
@@ -222,6 +186,13 @@ class Map {
         if (this._markers.length > 0) {
             this.removeMarkers();
         }
+
+        if (this._isFilterMarkersBusy) {
+            this._needToUpdateMarkers = true;
+            return;
+        }
+
+        this._isFilterMarkersBusy = true;
 
         const renderStart = now();
 
@@ -236,24 +207,47 @@ class Map {
                     const marker = DG.marker([lat, lng]).addTo(this._map);
                     this._markers.push(marker);
                 });
-                
+
                 //eslint-disable-next-line
                 console.log('rendered', now() - renderStart);
 
                 if (this._needToUpdateMarkers) {
                     this._updateMarkers();
                     this._needToUpdateMarkers = false;
-
                 }
             });
     }
 
+    /**
+     * Очищаем с карты все созданные маркеры и очищаем массив с маркерами.
+     */
+    removeMarkers() {
+        if (this._markers.length === 0) {
+            return;
+        }
+
+        this._markers.forEach(marker => {
+            marker.remove();
+        });
+
+        this._markers = [];
+    }
+
+    /**
+     * Сохраняем массив данных для последующей генерации маркеров.
+     *
+     * @param {Array} markersData сырой массив с данными по каждому маркеру
+     */
+    setMarkersData(markersData) {
+        this._markersData = markersData;
+    }
+
+    /**
+     * Отображаем маркеры на основе переданных ранее данных.
+     */
     showMarkers() {
         this._updateMarkers();
     }
 }
-import rbush from 'rbush';
-
-import { now } from './utils';
 
 export default Map;

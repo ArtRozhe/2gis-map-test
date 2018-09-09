@@ -55,6 +55,7 @@
     },
     "dependencies": {
         "2gis-maps": "^3.5.2",
-        "rbush": "^2.0.2"
+        "rbush": "^2.0.2",
+        "webworkify-webpack": "^2.1.3"
     }
 }
