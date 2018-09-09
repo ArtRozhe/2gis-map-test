@@ -28,12 +28,10 @@ class Map {
         this._markerBoxTree = rbush();
 
         this._onZoomStart = this._onZoomStart.bind(this);
-        this._onZoomEnd = this._onZoomEnd.bind(this);
         this._onResize = this._onResize.bind(this);
         this._onMoveEnd = this._onMoveEnd.bind(this);
 
         this._map.on('zoomstart', this._onZoomStart);
-        this._map.on('zoomend', this._onZoomEnd);
         // избегаем лишних рассчётов, реагируем на событие ресайза не более одного раза за 1000 мс
         // TODO: придумать, как сделать лучше обработку resize, пока что это очень слабое место текущей реализации
         this._map.on('resize', DG.Util.throttle(this._onResize, 1000));
@@ -50,18 +48,6 @@ class Map {
      */
     _onZoomStart() {
         this.removeMarkers();
-    }
-
-    /**
-     * После окончания зумирования рассчитываем необходимые параметры и
-     * начинаем процесс отображения маркеров, если есть что отображать.
-     *
-     * @private
-     */
-    _onZoomEnd() {
-        if (this._markersData.length > 0) {
-            this.renderMarkers();
-        }
     }
 
     /**
@@ -129,14 +115,14 @@ class Map {
      * @private
      */
     _isMarkerInRenderZone({ minX, minY, maxX, maxY }) {
-         const mapSize = this._map.getSize();
-         const showOutsizeVisibleZone = this._showOutsizeVisibleZone;
-         return !(
-             minX < -showOutsizeVisibleZone ||
-             maxX > mapSize.x + showOutsizeVisibleZone ||
-             minY < -showOutsizeVisibleZone ||
-             maxY > mapSize.y + showOutsizeVisibleZone
-         );
+        const mapSize = this._map.getSize();
+        const showOutsizeVisibleZone = this._showOutsizeVisibleZone;
+        return !(
+            minX < -showOutsizeVisibleZone ||
+            maxX > mapSize.x + showOutsizeVisibleZone ||
+            minY < -showOutsizeVisibleZone ||
+            maxY > mapSize.y + showOutsizeVisibleZone
+        );
     }
 
     /**
@@ -146,7 +132,6 @@ class Map {
     renderMarkers() {
         // TODO: нужно добавить очередь для обработки частых запросов
         // TODO: обдумать вынос алгоритма фильтрации маркеров в веб-воркер
-        // TODO: после zoomend сразу срабатывает moveend, нужно добавить ограничение на количество запросов к функции в единицу времени
         // TODO: нужно добавить учитывание pixelRatio
         if (this._markersData.length === 0) {
             return;
