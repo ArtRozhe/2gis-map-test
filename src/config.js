@@ -10,7 +10,7 @@ const mapConfig = {
     fullscreenControl: false,
     // запас в пикселях для видимой области карты,
     // учитывается при определении, попадает ли маркер в зону рендеринга
-    showOutsizeVisibleZone: 10,
+    showOutsideVisibleZone: 10,
     // размер иконки маркера,
     // дефолтное значение [22, 34] (на момент написания данной реализации)
     markerIconSize: {

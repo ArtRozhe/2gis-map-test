@@ -12,7 +12,7 @@ class Map {
         }
         config.zoom = config.zoom || 11;
         config.fullscreenControl = config.fullscreenControl === undefined ? true : config.fullscreenControl;
-        config.showOutsizeVisibleZone = config.showOutsizeVisibleZone === undefined ? 0 : config.showOutsizeVisibleZone;
+        config.showOutsideVisibleZone = config.showOutsideVisibleZone === undefined ? 0 : config.showOutsideVisibleZone;
         config.markerIconSize = config.markerIconSize || {
             width: 22,
             height: 34
@@ -23,8 +23,9 @@ class Map {
             zoom: config.zoom,
             fullscreenControl: config.fullscreenControl
         });
+
         this._markerIconSize = config.markerIconSize;
-        this._showOutsizeVisibleZone = config.showOutsizeVisibleZone;
+        this._showOutsideVisibleZone = config.showOutsideVisibleZone;
         this._markerBoxTree = rbush();
 
         this._onZoomStart = this._onZoomStart.bind(this);
@@ -51,7 +52,7 @@ class Map {
     }
 
     /**
-     * После ресайза сохраняем новые границы карты и перерисовываем маркеры.
+     * После ресайза удаляем с карты предыдущие маркеры и отображаем новые.
      *
      * @private
      */
@@ -60,6 +61,11 @@ class Map {
         this.renderMarkers();
     }
 
+    /**
+     * После окончания движения удаляем с карты предыдущие маркеры и отображаем новые.
+     *
+     * @private
+     */
     _onMoveEnd() {
         this.removeMarkers();
         this.renderMarkers();
@@ -69,6 +75,10 @@ class Map {
      * Очищаем с карты все созданные маркеры и очищаем массив с маркерами.
      */
     removeMarkers() {
+        if (this._markers.length === 0) {
+            return;
+        }
+
         this._markers.forEach(marker => {
             marker.remove();
         });
@@ -86,77 +96,82 @@ class Map {
     }
 
     /**
-     * Генерируем объект по формату для rbush.
+     * Определяем, находится ли прямоугольник-маркер markerBBox внутри
+     * переданной зоны zoneBBox с учётом запаса showOutsideZone.
      *
-     * @param {number} x координата "x" относительно контейнера карты
-     * @param {number} y координата "y" относительно контейнера карты
-     * @returns {{minX: number, minY: number, maxX: number, maxY: number}} объект для rbush
-     * @private
-     */
-    _getBBox({ x, y }) {
-        const { width, height } = this._markerIconSize;
-        return {
-            minX: x - width / 2,
-            minY: y - height,
-            maxX: x + width / 2,
-            maxY: y
-        }
-    }
-
-    /**
-     * Определяем, находится ли маркер (прямоугольник) в допускаемых границах отображения,
-     * с учётом запаса _showOutsizeVisibleZone (px) у видимой области карты.
-     *
-     * @param {number} minX минимальная координата "x" прямоугольника
-     * @param {number} minY минимальная координата "y" прямоугольника
-     * @param {number} maxX максимальная координата "x" прямоугольника
-     * @param {number} maxY максимальная координата "y" прямоугольника
+     * @param {object} markerBBox маркер в виде bounding-box в формате {minX, minY, maxX, maxY}
+     * @param {object} zoneBBox зона проверки на попадание маркера в виде bounding-box в формате {minX, minY, maxX, maxY}
+     * @param {number} offsetOutsideZone запас для границ zoneBBox
      * @returns {boolean}
-     * @private
+     * @static
      */
-    _isMarkerInRenderZone({ minX, minY, maxX, maxY }) {
-        const mapSize = this._map.getSize();
-        const showOutsizeVisibleZone = this._showOutsizeVisibleZone;
+    static isMarkerInZone(markerBBox, zoneBBox, offsetOutsideZone) {
         return !(
-            minX < -showOutsizeVisibleZone ||
-            maxX > mapSize.x + showOutsizeVisibleZone ||
-            minY < -showOutsizeVisibleZone ||
-            maxY > mapSize.y + showOutsizeVisibleZone
+            markerBBox.minX < zoneBBox.minX - offsetOutsideZone ||
+            markerBBox.maxX > zoneBBox.maxX + offsetOutsideZone ||
+            markerBBox.minY < zoneBBox.minY - offsetOutsideZone ||
+            markerBBox.maxY > zoneBBox.maxY + offsetOutsideZone
         );
     }
 
     /**
-     * Запускаем процесс , которую нужно показать, и процесс
-     * отображения маркеров на карте
+     * Генерируем объект по формату для rbush.
+     *
+     * @param {number} markerPositionX координата "x" относительно контейнера карты
+     * @param {number} markerPositionY координата "y" относительно контейнера карты
+     * @returns {{minX: number, minY: number, maxX: number, maxY: number}} bounding-box
+     * @private
+     */
+    _getMarkerBBox(markerPositionX, markerPositionY) {
+        const { width: markerIconWidth, height: markerIconHeight } = this._markerIconSize;
+        return {
+            minX: markerPositionX - markerIconWidth / 2,
+            minY: markerPositionY - markerIconHeight,
+            maxX: markerPositionX + markerIconWidth / 2,
+            maxY: markerPositionY
+        };
+    }
+
+    /**
+     * Запускаем процесс фильтрации и отображения маркеров.
      */
     renderMarkers() {
         // TODO: нужно добавить очередь для обработки частых запросов
         // TODO: обдумать вынос алгоритма фильтрации маркеров в веб-воркер
-        // TODO: нужно добавить учитывание pixelRatio
         if (this._markersData.length === 0) {
             return;
         }
 
-        // TODO: придумать, как не перерисовывать маркеры, которые были на карте и на следующем этапе должны на ней остаться
         if (this._markers.length > 0) {
             this.removeMarkers();
         }
 
         const renderStart = now();
+        const mapSize = this._map.getSize();
+        const renderZoneBBox = {
+            minX: 0,
+            minY: 0,
+            maxX: mapSize.x,
+            maxY: mapSize.y
+        };
 
         this._markersData.forEach(markerData => {
             const markerLat = markerData.lat;
             const markerLng = markerData.lon;
+
             const markerPixelCoordinates = this._map.latLngToContainerPoint([markerLat, markerLng]);
-            const bBox = this._getBBox(markerPixelCoordinates);
+            const markerBBox = this._getMarkerBBox(markerPixelCoordinates.x, markerPixelCoordinates.y);
 
             // считаем, что список маркеров отсортирован в порядке убывания приоритета, поэтому, если маркер пересекается с каким-либо ранее обработанным
             // и добавленным в дерево, он отбрасывается.
-            if (this._isMarkerInRenderZone(bBox) && !this._markerBoxTree.collides(bBox)) {
+            if (
+                this.constructor.isMarkerInZone(markerBBox, renderZoneBBox, this._showOutsideVisibleZone) &&
+                !this._markerBoxTree.collides(markerBBox)
+            ) {
                 const marker = DG.marker([markerLat, markerLng]).addTo(this._map);
 
                 this._markers.push(marker);
-                this._markerBoxTree.insert(bBox);
+                this._markerBoxTree.insert(markerBBox);
             }
         });
 
